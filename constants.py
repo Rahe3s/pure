@@ -1,0 +1,45 @@
+import re
+
+
+INVALID_CHARACTERS = re.compile(r"[^-a-zA-Z0-9]")
+GENERATED_NAME = re.compile(r".*-[a-f0-9]{32}-cinder$")
+
+REPLICATION_TYPE_SYNC = "sync"
+REPLICATION_TYPE_ASYNC = "async"
+REPLICATION_TYPE_TRISYNC = "trisync"
+REPLICATION_TYPES = [
+    REPLICATION_TYPE_SYNC,
+    REPLICATION_TYPE_ASYNC,
+    REPLICATION_TYPE_TRISYNC
+]
+
+CHAP_SECRET_KEY = "PURE_TARGET_CHAP_SECRET"
+
+ERR_MSG_NOT_EXIST = "does not exist"
+ERR_MSG_HOST_NOT_EXIST = "Host " + ERR_MSG_NOT_EXIST
+ERR_MSG_NO_SUCH_SNAPSHOT = "No such volume or snapshot"
+ERR_MSG_PENDING_ERADICATION = "has been destroyed"
+ERR_MSG_ALREADY_EXISTS = "already exists"
+ERR_MSG_COULD_NOT_BE_FOUND = "could not be found"
+ERR_MSG_ALREADY_INCLUDES = "already includes"
+ERR_MSG_ALREADY_ALLOWED = "already allowed on"
+ERR_MSG_ALREADY_BELONGS = "already belongs to"
+ERR_MSG_EXISTING_CONNECTIONS = "cannot be deleted due to existing connections"
+ERR_MSG_ALREADY_IN_USE = "already in use"
+ERR_MSG_ARRAY_LIMIT = "limit reached"
+
+EXTRA_SPECS_REPL_ENABLED = "replication_enabled"
+EXTRA_SPECS_REPL_TYPE = "replication_type"
+
+MAX_VOL_LENGTH = 63
+MAX_SNAP_LENGTH = 96
+UNMANAGED_SUFFIX = '-unmanaged'
+
+NVME_PORT = 4420
+
+REPL_SETTINGS_PROPAGATE_RETRY_INTERVAL = 5  # 5 seconds
+REPL_SETTINGS_PROPAGATE_MAX_RETRIES = 36  # 36 * 5 = 180 seconds
+
+HOST_CREATE_MAX_RETRIES = 5
+
+USER_AGENT_BASE = 'OpenStack Cinder'
