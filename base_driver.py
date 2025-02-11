@@ -1,7 +1,12 @@
 import distro
+import uuid
+import math
+from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_utils import excutils
 from packaging import version
+from cinder.i18n import _
+
 try:
     from pypureclient import flasharray
 except ImportError:
@@ -14,12 +19,15 @@ from cinder.volume.drivers.san import san
 from cinder.volume import volume_utils
 from cinder.volume import volume_types
 from cinder.objects import fields
-from .exceptions import PureDriverException
+from .exceptions import PureDriverException,PureRetryableException
 
 from config import PURE_OPTS
 from constants import USER_AGENT_BASE
 from.utils import pure_driver_debug_trace
 from oslo_utils import units
+from .constants import *
+from cinder import exception
+from .config import CONF
 
 
 LOG = logging.getLogger(__name__)
@@ -390,149 +398,149 @@ class PureBaseVolumeDriver(san.SanDriver):
 #check the code later..........................................!!!!!
 
 
-    # def _is_multiattach_to_host(self, volume_attachment, host_name):
-    #     # When multiattach is enabled a volume could be attached to multiple
-    #     # instances which are hosted on the same Nova compute.
-    #     # Because Purity cannot recognize the volume is attached more than
-    #     # one instance we should keep the volume attached to the Nova compute
-    #     # until the volume is detached from the last instance
-    #     if not volume_attachment:
-    #         return False
+    def _is_multiattach_to_host(self, volume_attachment, host_name):
+        # When multiattach is enabled a volume could be attached to multiple
+        # instances which are hosted on the same Nova compute.
+        # Because Purity cannot recognize the volume is attached more than
+        # one instance we should keep the volume attached to the Nova compute
+        # until the volume is detached from the last instance
+        if not volume_attachment:
+            return False
 
-    #     attachment = [a for a in volume_attachment
-    #                   if a.attach_status == "attached" and
-    #                   a.attached_host == host_name]
-    #     return len(attachment) > 1
+        attachment = [a for a in volume_attachment
+                      if a.attach_status == "attached" and
+                      a.attached_host == host_name]
+        return len(attachment) > 1
 
-    # @pure_driver_debug_trace
-    # def _disconnect(self, array, volume, connector, remove_remote_hosts=True,
-    #                 is_multiattach=False):
-    #     """Disconnect the volume from the host described by the connector.
+    @pure_driver_debug_trace
+    def _disconnect(self, array, volume, connector, remove_remote_hosts=True,
+                    is_multiattach=False):
+        """Disconnect the volume from the host described by the connector.
 
-    #     If no connector is specified it will remove *all* attachments for
-    #     the volume.
+        If no connector is specified it will remove *all* attachments for
+        the volume.
 
-    #     Returns True if it was the hosts last connection.
-    #     """
-    #     vol_name = self._get_vol_name(volume)
-    #     if connector is None:
-    #         # If no connector was provided it is a force-detach, remove all
-    #         # host connections for the volume
-    #         LOG.warning("Removing ALL host connections for volume %s",
-    #                     vol_name)
-    #         connections = list(array.get_connections(
-    #             volume_names=[vol_name]).items)
-    #         for connection in range(0, len(connections)):
-    #             self._disconnect_host(array,
-    #                                   connections[connection]['host'],
-    #                                   vol_name)
-    #         return False
-    #     else:
-    #         # Normal case with a specific initiator to detach it from
-    #         hosts = self._get_host(array, connector,
-    #                                remote=remove_remote_hosts)
-    #         if hosts:
-    #             any_in_use = False
-    #             host_in_use = False
-    #             for host in hosts:
-    #                 host_name = host.name
-    #                 if not is_multiattach:
-    #                     host_in_use = self._disconnect_host(array,
-    #                                                         host_name,
-    #                                                         vol_name)
-    #                 else:
-    #                     LOG.warning("Unable to disconnect host from volume. "
-    #                                 "Volume is multi-attached.")
-    #                 any_in_use = any_in_use or host_in_use
-    #             return any_in_use
-    #         else:
-    #             LOG.error("Unable to disconnect host from volume, could not "
-    #                       "determine Purity host on array %s",
-    #                       array.backend_id)
-    #             return False
+        Returns True if it was the hosts last connection.
+        """
+        vol_name = self._get_vol_name(volume)
+        if connector is None:
+            # If no connector was provided it is a force-detach, remove all
+            # host connections for the volume
+            LOG.warning("Removing ALL host connections for volume %s",
+                        vol_name)
+            connections = list(array.get_connections(
+                volume_names=[vol_name]).items)
+            for connection in range(0, len(connections)):
+                self._disconnect_host(array,
+                                      connections[connection]['host'],
+                                      vol_name)
+            return False
+        else:
+            # Normal case with a specific initiator to detach it from
+            hosts = self._get_host(array, connector,
+                                   remote=remove_remote_hosts)
+            if hosts:
+                any_in_use = False
+                host_in_use = False
+                for host in hosts:
+                    host_name = host.name
+                    if not is_multiattach:
+                        host_in_use = self._disconnect_host(array,
+                                                            host_name,
+                                                            vol_name)
+                    else:
+                        LOG.warning("Unable to disconnect host from volume. "
+                                    "Volume is multi-attached.")
+                    any_in_use = any_in_use or host_in_use
+                return any_in_use
+            else:
+                LOG.error("Unable to disconnect host from volume, could not "
+                          "determine Purity host on array %s",
+                          array.backend_id)
+                return False
 
 
-    # @pure_driver_debug_trace
-    # def terminate_connection(self, volume, connector, **kwargs):
-    #     """Terminate connection."""
-    #     vol_name = self._get_vol_name(volume)
-    #     # None `connector` indicates force detach, then delete all even
-    #     # if the volume is multi-attached.
-    #     multiattach = (connector is not None and
-    #                    self._is_multiattach_to_host(volume.volume_attachment,
-    #                                                 connector["host"]))
-    #     if self._is_vol_in_pod(vol_name):
-    #         # Try to disconnect from each host, they may not be online though
-    #         # so if they fail don't cause a problem.
-    #         for array in self._uniform_active_cluster_target_arrays:
-    #             res = self._disconnect(array, volume, connector,
-    #                                    remove_remote_hosts=False,
-    #                                    is_multiattach=multiattach)
-    #             if not res:
-    #                 # Swallow any exception, just warn and continue
-    #                 LOG.warning("Disconnect on secondary array failed")
-    #     # Now disconnect from the current array
-    #     self._disconnect(self._get_current_array(), volume,
-    #                      connector, remove_remote_hosts=False,
-    #                      is_multiattach=multiattach)
+    @pure_driver_debug_trace
+    def terminate_connection(self, volume, connector, **kwargs):
+        """Terminate connection."""
+        vol_name = self._get_vol_name(volume)
+        # None `connector` indicates force detach, then delete all even
+        # if the volume is multi-attached.
+        multiattach = (connector is not None and
+                       self._is_multiattach_to_host(volume.volume_attachment,
+                                                    connector["host"]))
+        if self._is_vol_in_pod(vol_name):
+            # Try to disconnect from each host, they may not be online though
+            # so if they fail don't cause a problem.
+            for array in self._uniform_active_cluster_target_arrays:
+                res = self._disconnect(array, volume, connector,
+                                       remove_remote_hosts=False,
+                                       is_multiattach=multiattach)
+                if not res:
+                    # Swallow any exception, just warn and continue
+                    LOG.warning("Disconnect on secondary array failed")
+        # Now disconnect from the current array
+        self._disconnect(self._get_current_array(), volume,
+                         connector, remove_remote_hosts=False,
+                         is_multiattach=multiattach)
 
-    # @pure_driver_debug_trace
-    # def _disconnect_host(self, array, host_name, vol_name):
-    #     """Return value indicates if host should be cleaned up."""
-    #     res = array.delete_connections(host_names=[host_name],
-    #                                    volume_names=[vol_name])
-    #     if res.status_code == 400:
-    #         with excutils.save_and_reraise_exception() as ctxt:
-    #             if (ERR_MSG_NOT_EXIST in res.errors[0].message or
-    #                     ERR_MSG_HOST_NOT_EXIST in res.errors[0].message):
-    #                 # Happens if the host and volume are not connected or
-    #                 # the host has already been deleted
-    #                 ctxt.reraise = False
-    #                 LOG.warning("Disconnection failed with message: "
-    #                             "%(msg)s.",
-    #                             {"msg": res.errors[0].message})
+    @pure_driver_debug_trace
+    def _disconnect_host(self, array, host_name, vol_name):
+        """Return value indicates if host should be cleaned up."""
+        res = array.delete_connections(host_names=[host_name],
+                                       volume_names=[vol_name])
+        if res.status_code == 400:
+            with excutils.save_and_reraise_exception() as ctxt:
+                if (ERR_MSG_NOT_EXIST in res.errors[0].message or
+                        ERR_MSG_HOST_NOT_EXIST in res.errors[0].message):
+                    # Happens if the host and volume are not connected or
+                    # the host has already been deleted
+                    ctxt.reraise = False
+                    LOG.warning("Disconnection failed with message: "
+                                "%(msg)s.",
+                                {"msg": res.errors[0].message})
 
-    #     # If it is a remote host, call it quits here. We cannot delete a remote
-    #     # host even if it should be cleaned up now.
-    #     if ':' in host_name:
-    #         return
+        # If it is a remote host, call it quits here. We cannot delete a remote
+        # host even if it should be cleaned up now.
+        if ':' in host_name:
+            return
 
-    #     connections = None
-    #     res = array.get_connections(host_names=[host_name])
-    #     connection_obj = getattr(res, "items", None)
-    #     if connection_obj:
-    #         connections = list(connection_obj)
-    #     if res.status_code == 400:
-    #         with excutils.save_and_reraise_exception() as ctxt:
-    #             if ERR_MSG_NOT_EXIST in res.errors[0].message:
-    #                 ctxt.reraise = False
+        connections = None
+        res = array.get_connections(host_names=[host_name])
+        connection_obj = getattr(res, "items", None)
+        if connection_obj:
+            connections = list(connection_obj)
+        if res.status_code == 400:
+            with excutils.save_and_reraise_exception() as ctxt:
+                if ERR_MSG_NOT_EXIST in res.errors[0].message:
+                    ctxt.reraise = False
 
-    #     # Assume still used if volumes are attached
-    #     host_still_used = bool(connections)
-    #     if GENERATED_NAME.match(host_name) and not host_still_used:
-    #         LOG.info("Attempting to delete unneeded host %(host_name)r.",
-    #                  {"host_name": host_name})
-    #         res = array.delete_hosts(names=[host_name])
-    #         if res.status_code == 200:
-    #             host_still_used = False
-    #         else:
-    #             with excutils.save_and_reraise_exception() as ctxt:
-    #                 if ERR_MSG_NOT_EXIST in res.errors[0].message:
-    #                     # Happens if the host is already deleted.
-    #                     # This is fine though, just log so we know what
-    #                     # happened.
-    #                     ctxt.reraise = False
-    #                     host_still_used = False
-    #                     LOG.debug("Purity host deletion failed: "
-    #                               "%(msg)s.", {"msg": res.errors[0].message})
-    #                 if ERR_MSG_EXISTING_CONNECTIONS in res.errors[0].message:
-    #                     # If someone added a connection underneath us
-    #                     # that's ok, just keep going.
-    #                     ctxt.reraise = False
-    #                     host_still_used = True
-    #                     LOG.debug("Purity host deletion ignored: %(msg)s",
-    #                               {"msg": res.errors[0].message})
-    #     return not host_still_used
+        # Assume still used if volumes are attached
+        host_still_used = bool(connections)
+        if GENERATED_NAME.match(host_name) and not host_still_used:
+            LOG.info("Attempting to delete unneeded host %(host_name)r.",
+                     {"host_name": host_name})
+            res = array.delete_hosts(names=[host_name])
+            if res.status_code == 200:
+                host_still_used = False
+            else:
+                with excutils.save_and_reraise_exception() as ctxt:
+                    if ERR_MSG_NOT_EXIST in res.errors[0].message:
+                        # Happens if the host is already deleted.
+                        # This is fine though, just log so we know what
+                        # happened.
+                        ctxt.reraise = False
+                        host_still_used = False
+                        LOG.debug("Purity host deletion failed: "
+                                  "%(msg)s.", {"msg": res.errors[0].message})
+                    if ERR_MSG_EXISTING_CONNECTIONS in res.errors[0].message:
+                        # If someone added a connection underneath us
+                        # that's ok, just keep going.
+                        ctxt.reraise = False
+                        host_still_used = True
+                        LOG.debug("Purity host deletion ignored: %(msg)s",
+                                  {"msg": res.errors[0].message})
+        return not host_still_used
 
 
     @pure_driver_debug_trace

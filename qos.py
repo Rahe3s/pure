@@ -8,9 +8,6 @@ from utils import pure_driver_debug_trace
 
 LOG = logging.getLogger(__name__)
 
-
-LOG = logging.getLogger(__name__)
-
 class PureQoSMixin(PureBaseVolumeDriver):
     """Handles Quality of Service (QoS) settings for volumes."""
 
@@ -143,3 +140,4 @@ class PureQoSMixin(PureBaseVolumeDriver):
             qos['maxIOPS'] = iops_qos
             qos['maxBWS'] = bw_qos
         return qos
+    

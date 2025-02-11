@@ -1,9 +1,5 @@
-import functools
-import uuid
-
 from oslo_log import log as logging
 from cinder.volume import driver
-
 from cinder.i18n import _
 from cinder import interface
 from cinder.zonemanager import utils as fczm_utils
@@ -15,19 +11,18 @@ try:
 except ImportError:
     flasharray = None
 from os_brick import constants as brick_constants
-from oslo_log import log as logging
-from packaging import version
 try:
     from pypureclient import flasharray
 except ImportError:
     flasharray = None
-
 from cinder.common import constants
-from cinder.i18n import _
-from cinder import interface
-
 from cinder import utils
-from cinder.volume import driver
+from.utils import pure_driver_debug_trace
+from .constants import *
+from .exceptions import *
+
+LOG = logging.getLogger(__name__)
+
 
 @interface.volumedriver
 class PureFCDriver(PureBaseVolumeDriver, driver.FibreChannelDriver):
